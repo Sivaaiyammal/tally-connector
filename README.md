@@ -4,6 +4,90 @@ Pushes data one-way from MEVA ERP into TallyPrime: Customers, Vendors, Items, Sa
 
 It does **not** use Tally's ODBC driver — that driver is read-only and can't create records. It posts XML to Tally's import gateway instead (the same port ODBC uses, just a different request type).
 
+## Using this in another project
+
+This is a standalone Node process — it talks to your ERP over HTTP and to Tally
+over TCP, and imports nothing from the host app. So you can consume it three
+ways, cheapest first.
+
+**What the host app must provide either way:** an endpoint at
+`GET/POST {MEVA_API_BASE_URL}/api/tally/sync` authenticated with an `x-api-key`
+header, where `GET ?entity=<name>` returns pending records and `POST` acks them.
+Dropping this connector into a project that doesn't expose that route will start
+up fine and then fail on every fetch.
+
+### Option A — just the executable (no source, no Node)
+
+If you only need to *run* it, you don't need this repo in your project at all.
+Build once (`npm run build`), then copy `dist/tally-connector.exe` and a
+filled-in `.env` into a folder on the Tally PC. Simplest option by a distance;
+prefer it unless you need to edit the connector alongside the host app.
+
+### Option B — as a git submodule
+
+Use this when you want the source checked out next to the host app so the two
+can be changed together.
+
+```bash
+git submodule add git@github.com:Sivaaiyammal/tally-connector.git tally-connector
+git commit -m "Add tally-connector submodule"
+
+cd tally-connector
+npm install
+cp .env.example .env      # then fill it in — see steps below
+```
+
+Cloning a project that already has it:
+
+```bash
+git clone --recurse-submodules <project-url>
+
+# or, if you already cloned without that flag and the folder is empty:
+git submodule update --init
+```
+
+An empty `tally-connector/` directory after cloning always means the submodule
+wasn't initialised — that is the single most common snag with this setup.
+
+**Changing the connector from inside a host project.** The parent repo pins one
+exact commit, not a branch, so a change takes two commits:
+
+```bash
+cd tally-connector
+git add -A && git commit -m "Fix stock journal rounding"
+git push                       # <- easy to forget; without it the pin below
+                               #    points at a commit nobody else can fetch
+
+cd ..
+git add tally-connector        # stages the moved pin, not the file contents
+git commit -m "Bump tally-connector"
+```
+
+**Pulling connector updates into a host project:**
+
+```bash
+git submodule update --remote tally-connector
+git add tally-connector && git commit -m "Bump tally-connector"
+```
+
+### Option C — as an npm dependency
+
+Use this when the host app should just install it like any other package and
+never edit it.
+
+```bash
+npm install github:Sivaaiyammal/tally-connector
+```
+
+Then run it via `npx tally-connector --once`, or wire it into the host's scripts.
+No submodule bookkeeping, but the source isn't editable in place.
+
+### Requirements
+
+Node 20 or newer (the `.exe` build targets `node20-win-x64`). `.env` is
+gitignored and never committed — every deployment needs its own copy made from
+`.env.example`.
+
 ## 1. Enable Tally's XML gateway
 
 In TallyPrime: **F1 (Help) → Settings → Connectivity → Client/Server configuration**
