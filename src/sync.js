@@ -42,7 +42,10 @@ async function syncEntity(entity) {
         pushed++;
       } else {
         const message =
-          result.lineError || `Tally reported ${result.errors} error(s), 0 created/altered`;
+          result.lineError ||
+          (result.exceptions > 0
+            ? `Tally reported an exception with no detail — usually means no company is open in TallyPrime, or "${config.tallyCompanyName}" doesn't match the company name shown in Tally exactly.`
+            : `Tally reported ${result.errors} error(s), 0 created/altered`);
         await mevaClient.ack(entity, record.id, "error", message);
         console.error(`[${entity}] FAILED: ${name} — ${message}`);
         failed++;
@@ -57,6 +60,9 @@ async function syncEntity(entity) {
 }
 
 async function runOnce() {
+  if (!config.isConfigured()) {
+    throw new Error("Not configured yet — set MEVA connection and Tally company name in Settings.");
+  }
   const entities = Object.keys(ENTITY_BUILDERS).filter((entity) => config.syncEnabled[entity]);
   const summary = [];
   for (const entity of entities) {

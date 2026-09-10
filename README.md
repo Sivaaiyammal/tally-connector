@@ -16,12 +16,13 @@ header, where `GET ?entity=<name>` returns pending records and `POST` acks them.
 Dropping this connector into a project that doesn't expose that route will start
 up fine and then fail on every fetch.
 
-### Option A — just the executable (no source, no Node)
+### Option A — just the installer (no source, no Node)
 
 If you only need to *run* it, you don't need this repo in your project at all.
-Build once (`npm run build`), then copy `dist/tally-connector.exe` and a
-filled-in `.env` into a folder on the Tally PC. Simplest option by a distance;
-prefer it unless you need to edit the connector alongside the host app.
+Build once (`npm run dist`), then copy the installer from `dist-build/` (e.g.
+`Tally Connector Setup 1.0.0.exe`) to the Tally PC and run it — Next, Next,
+Finish, like any Windows app. Simplest option by a distance; prefer it unless
+you need to edit the connector alongside the host app.
 
 ### Option B — as a git submodule
 
@@ -84,9 +85,9 @@ No submodule bookkeeping, but the source isn't editable in place.
 
 ### Requirements
 
-Node 20 or newer (the `.exe` build targets `node20-win-x64`). `.env` is
-gitignored and never committed — every deployment needs its own copy made from
-`.env.example`.
+End users need nothing — the installer bundles its own Electron/Node runtime.
+Building from source needs Node 18+. `.env` is only used by the headless CLI
+path; it's gitignored and never committed.
 
 ## 1. Enable Tally's XML gateway
 
@@ -105,47 +106,61 @@ The connector does **not** create ledger groups, tax ledgers, or your Sales/Purc
 - Your CGST / SGST / IGST ledgers
 - Your Round Off, Bank, and Cash ledgers
 
-Put those exact names into `.env` (see `.env.example` — every value is commented). If a name doesn't match, Tally will reject that voucher with a clear error, which the connector logs and records back in MEVA against that document (see "Retrying a failed record" below) — nothing is silently dropped.
+You'll enter these exact names in the Settings window in step 4 below — there's no `.env` file to hand-edit for a normal install. If a name doesn't match, Tally will reject that voucher with a clear error, which the connector logs and records back in MEVA against that document — nothing is silently dropped.
 
-## 3. Configure
+## 3. Install
 
-```
-cp .env.example .env
-```
+**End users — the installer (recommended):** build it once (`npm run dist` — see "Building the installer" below), then run the resulting `Tally Connector Setup <version>.exe` on the Tally PC. It installs to `Program Files`, adds a Start Menu shortcut, and launches the app, which sits in the system tray (bottom-right, near the clock) — that tray icon is the whole app; there's no window until you click it.
 
-Fill in:
-- `MEVA_API_BASE_URL` / `MEVA_API_KEY` — the key must match `CONNECTOR_API_KEY` in MEVA ERP's own `.env`.
-- `TALLY_HOST` / `TALLY_PORT` / `TALLY_COMPANY_NAME`.
-- The chart-of-accounts names from step 2.
-- `SYNC_*` flags — set any to `false` to skip that entity entirely.
-
-## 4. Run
-
-**During development** (Node installed):
+**Developers** (Node installed, running from source):
 ```
 npm install
-npm start        # runs continuously, polling every SYNC_INTERVAL_SECONDS
-npm run sync      # runs once and exits — good for testing
+npm start
 ```
 
-**As the packaged `.exe`** (no Node required on the target PC):
-```
-npm run build     # produces dist/tally-connector.exe
-```
-Copy `dist/tally-connector.exe` and your filled-in `.env` to the Tally PC, into the same folder, then double-click it (or run `tally-connector.exe --once` from a terminal to do a single pass). It reads `.env` from its own folder.
+## 4. Configure via the Settings window
+
+Click the tray icon (or right-click it → **Open Settings…**) to open the settings window. Fill in:
+- **MEVA ERP connection** — Server URL and API key (the key must match `CONNECTOR_API_KEY` in MEVA ERP's own `.env`).
+- **TallyPrime connection** — company name, host, port.
+- **Chart of accounts** — the exact ledger/group names from step 2.
+- **What to sync** — one checkbox per entity; uncheck any you don't want pushed.
+- **Sync every (minutes)** — defaults to 15.
+
+Click **Save**. Settings take effect immediately, no restart needed — the background loop picks up the new interval and config on its next tick. Click **Sync Now** to trigger a run immediately instead of waiting.
+
+Right-click the tray icon for **Start with Windows** — check it once and the app relaunches automatically at login, so you don't have to remember to start it after a reboot.
 
 ## 5. Reading the output
 
-Each record logs one line:
+The tray icon's tooltip and the Settings window both show the last run's result (`Last run: 4 pushed, 1 failed`) or the first error hit. For the full history, right-click the tray icon → **Open Log File**:
 ```
-[salesInvoices] pushed: Sales Invoice INV-001
-[items] FAILED: Item "Cotton Yarn 30s" — Tally gateway HTTP 400: ...
+[2026-09-10T05:55:27Z] sync run start (scheduled)
+[2026-09-10T05:55:28Z] sync run done (scheduled): 4 pushed, 1 failed
 ```
-A `pushed` line means Tally reported the record as created and MEVA has been told not to send it again. A `FAILED` line means MEVA has recorded the error message on that record (visible nowhere in the UI yet, but stored) and will offer it again next run — fix the underlying cause (usually a ledger-name mismatch or a required master not yet synced) and it retries automatically.
+A per-record failure (e.g. a ledger-name mismatch) is also written back to MEVA against that document and retried automatically on the next run — nothing needs manual re-triggering once the underlying cause is fixed.
 
 ## 6. Order matters the first time
 
-Run with only masters enabled first (`SYNC_CUSTOMERS`, `SYNC_SUPPLIERS`, `SYNC_ITEMS` — leave the rest `false`), confirm those ledgers/stock items actually appear in TallyPrime, **then** enable the voucher types. A sales voucher references a customer ledger and stock items that must already exist in Tally, so pushing invoices before their customer/items are in Tally will fail every one of them.
+In Settings, enable only **Customers**, **Vendors**, and **Items** at first — leave the voucher checkboxes off. Save, click **Sync Now**, and confirm those ledgers/stock items actually appear in TallyPrime. *Then* turn the voucher checkboxes on. A sales voucher references a customer ledger and stock items that must already exist in Tally, so pushing invoices before their customer/items are there will fail every one of them.
+
+## Building the installer
+
+```
+npm install
+npm run icon     # regenerate electron/assets/icon.png if you've changed it
+npm run dist      # produces dist-build/Tally Connector Setup <version>.exe (NSIS)
+```
+On Windows, if the build fails with `app.asar ... being used by another process`, it's almost always a background scanner (antivirus, or OneDrive if the project folder is under a synced Desktop/Documents path) grabbing the freshly-written file — wait a few seconds and rerun `npm run dist` rather than fighting it, or build outside a synced folder.
+
+## Headless / CLI mode (development only)
+
+The Electron app is the supported way to run this. For local testing without a GUI, the same sync engine is reachable directly:
+```
+cp .env.example .env   # fill in the same fields as the Settings window
+npm run cli:sync       # one pass, then exits
+npm run cli             # loops on SYNC_INTERVAL_SECONDS like the tray app would
+```
 
 ## What isn't covered yet
 
@@ -156,13 +171,20 @@ Run with only masters enabled first (`SYNC_CUSTOMERS`, `SYNC_SUPPLIERS`, `SYNC_I
 ## Project layout
 
 ```
+electron/
+  main.js           tray icon, settings window, the 15-min background loop, IPC handlers
+  preload.js        the only bridge the settings page has into Node (contextIsolation is on)
+  settings.html/.js  the settings window's UI
+  settingsStore.js   persists settings.json under the OS user-data folder
+  log.js             appends to tally-connector.log next to settings.json
+  assets/icon.png    tray/app icon (regenerate via `npm run icon`)
 src/
-  config.js        loads and validates .env
-  mevaClient.js     talks to MEVA's /api/tally/sync
-  tallyClient.js    posts XML to Tally, parses its response
-  sync.js           orchestrates: fetch pending -> build XML -> post -> ack
-  index.js          entry point (--once flag for a single pass)
-  xml/              one file per Tally XML shape (ledger, stock item, sales/purchase
+  config.js         a live, mutable config object — settingsStore (GUI) or .env (CLI) populate it
+  mevaClient.js      talks to MEVA's /api/tally/sync
+  tallyClient.js     posts XML to Tally, parses its response
+  sync.js            orchestrates: fetch pending -> build XML -> post -> ack
+  index.js           headless CLI entry point (--once flag for a single pass)
+  xml/               one file per Tally XML shape (ledger, stock item, sales/purchase
                      voucher, receipt voucher, physical-stock voucher) — each is
                      isolated, so adjusting one to match a Tally quirk you hit
                      doesn't risk the others.
